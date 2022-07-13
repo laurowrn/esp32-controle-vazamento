@@ -5,6 +5,7 @@
   #include <ESP8266WiFi.h>
 #endif
 #include <Firebase_ESP_Client.h>
+#include "time.h"
 
 //Provide the token generation process info.
 #include "addons/TokenHelper.h"
@@ -22,6 +23,12 @@ FirebaseData fbdo;
 FirebaseAuth auth;
 FirebaseConfig config;
 bool signupOK = false;
+
+// NTP server to request epoch time
+const char* ntpServer = "pool.ntp.org";
+
+// Variable to save current epoch time
+int epochTime; 
 
 // PORTAS
 int valve1Output = 33;
@@ -49,10 +56,20 @@ int lastTime = 0;
 int sampleTime = 5000;
 
 // CONEXAO WIFI
-const char *WIFI_SSID = "";
-const char *WIFI_PASSWORD = "";
+#define WIFI_SSID ""
+#define WIFI_PASSWORD ""
 
-int counter = 0;
+// Function that gets current epoch time
+int getTime() {
+  time_t now;
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    //Serial.println("Failed to obtain time");
+    return(0);
+  }
+  time(&now);
+  return now;
+}
 
 void IRAM_ATTR sensor1Pulse() { sensor1PulseCounter++; }
 
@@ -71,7 +88,7 @@ void setup() {
     delay(1000);
 
     WiFi.mode(WIFI_STA); //Optional
-    WiFi.begin("Lauro", "10203040");
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     Serial.println("\nConnecting");
 
     while(WiFi.status() != WL_CONNECTED){
@@ -114,6 +131,7 @@ void setup() {
   
   Firebase.begin(&config, &auth);
   Firebase.reconnectWiFi(true);
+  configTime(0, 0, ntpServer);
 
 }
 
@@ -123,6 +141,10 @@ void loop() {
   
   
   if (Firebase.ready() && (currentTime >= (lastTime + sampleTime))){
+    epochTime = getTime();
+    Serial.print("Epoch Time: ");
+    Serial.println(epochTime);
+    Serial.println("------------------------");
     lastTime = currentTime;
 
     sensor1Volume = getVolume(sensor1PulseCounter);
@@ -130,26 +152,42 @@ void loop() {
     sensor1FlowRate = getFlowRate(sensor1PulseCounter, sampleTime);
     sensor2FlowRate = getFlowRate(sensor2PulseCounter, sampleTime);
 
+    FirebaseJson sensor1VolumeData;
+    FirebaseJson sensor2VolumeData;
+    FirebaseJson sensor1FlowRateData;
+    FirebaseJson sensor2FlowRateData;
+
+    sensor1VolumeData.set("timestamp", epochTime);
+    sensor1VolumeData.set("value", sensor1Volume);
+
+    sensor2VolumeData.set("timestamp", epochTime);
+    sensor2VolumeData.set("value", sensor2Volume);
+
+    sensor1FlowRateData.set("timestamp", epochTime);
+    sensor1FlowRateData.set("value", sensor1FlowRate);
+
+    sensor2FlowRateData.set("timestamp", epochTime);
+    sensor2FlowRateData.set("value", sensor2FlowRate);
     
-    if (Firebase.RTDB.pushFloat(&fbdo, "/sensores/sensor1/volume", sensor1Volume)) {
+    if (Firebase.RTDB.pushJSON(&fbdo, "/sensores/sensor1/volume", &sensor1VolumeData)) {
       Serial.println("Volume 1 pushed.");
     }
     else{
       ESP.restart();
     }
-    if (Firebase.RTDB.pushFloat(&fbdo, "/sensores/sensor2/volume", sensor2Volume)) {
+    if (Firebase.RTDB.pushJSON(&fbdo, "/sensores/sensor2/volume", &sensor2VolumeData)) {
       Serial.println("Volume 2 pushed.");
     }
     else{
       ESP.restart();
     }
-    if (Firebase.RTDB.pushFloat(&fbdo, "/sensores/sensor1/flowRate", sensor1FlowRate)) {
+    if (Firebase.RTDB.pushJSON(&fbdo, "/sensores/sensor1/flowRate", &sensor1FlowRateData)) {
       Serial.println("Flow Rate 1 pushed");
     }
     else{
       ESP.restart();
     }
-    if (Firebase.RTDB.pushFloat(&fbdo, "/sensores/sensor2/flowRate", sensor2FlowRate)) {
+    if (Firebase.RTDB.pushJSON(&fbdo, "/sensores/sensor2/flowRate", &sensor2FlowRateData)) {
       Serial.println("Flow Rate 2 pushed");
     }
     else{
@@ -171,7 +209,6 @@ void loop() {
       ESP.restart();
     }
     
-    counter++;
     sensor1PulseCounter = 0;
     sensor2PulseCounter = 0;
     
